@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { Clock, KeepStencilOp, MathUtils, Vector3 } from 'three';
+import { Box3, Clock, Group, KeepStencilOp, MathUtils, Vector3 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 
-// variables
+// variables-----------------------------------------------------
 const xaxis=new Vector3(1,0,0);
 const yaxis=new Vector3(0,1,0);
 const zaxis=new Vector3(0,0,1);
@@ -20,8 +20,22 @@ let carVel=0;
 const carPower=3.5;
 const carBrakePower=3.5;
 const friction=2;
+const maxGasCans=20;
+let gasCansOnTrack=0; // length of arr?
+// [[gasCanObject,itsBoundingBox]]
+const gasCanArr=[];
+let health=100;
+let fuel=110; // litres
+let gasCanFuel=5; // litres
+// score?? time??
+let fuelDist=0.81; // how far you can go on 1 litre
 
 
+
+
+
+
+// initial camera and scene setup---------------------------------------------
 // creating the scene and camera
 const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(75,window.innerWidth/window.innerHeight,0.1,1000);
@@ -45,9 +59,6 @@ miniRenderer.domElement.style.left=20+"px";
 document.body.appendChild(miniRenderer.domElement);
 
 
-
-
-
 function setCameraPos(x,y,z,lookAtVec,cam)
 {
     if(cam=="normal")
@@ -67,10 +78,16 @@ function setCameraPos(x,y,z,lookAtVec,cam)
 }
 
 
+
+
+
+
+
+// main function ----------------------------------------
 async function main()
 {
 
-
+    // More detailed configuration ----------------------------------------------------
     // adding lighting
     const ambientLight=new THREE.AmbientLight('white',1);
     scene.add(ambientLight);
@@ -85,12 +102,14 @@ async function main()
     // loading all meshes into the app
     const loader=new GLTFLoader();
     const cons_stadiumData=await loader.loadAsync("../Meshes/full_stadium_myTrack.glb");
-    console.log(cons_stadiumData)
+    //console.log(cons_stadiumData)
     const car=cons_stadiumData.scene.children[6];
     const track=cons_stadiumData.scene.children[2];
     const outer_stadium=cons_stadiumData.scene.children[1];
     const inner_stadium=cons_stadiumData.scene.children[0];
-
+    let gasCan=await loader.loadAsync("../Meshes/gas-can.glb");
+    gasCan=gasCan.scene;
+    
 
 
 
@@ -102,6 +121,11 @@ async function main()
     // configuring these meshes
     car.rotation.z+=MathUtils.degToRad(180); // local coordinate frame of car
     let carLookDir=new Vector3(0,0,-1); // front of the car
+    const carBB=new THREE.Box3(new THREE.Vector3(),new THREE.Vector3());
+    carBB.setFromObject(car);
+    //console.log(carBB,car.position);
+    gasCan.position.y=-7.14;
+    gasCan.scale.set(1/6,1/6,1/6);
 
 
     // initial camera config
@@ -113,8 +137,48 @@ async function main()
     const driver_vert_CamPos=yaxis.clone().multiplyScalar(driver_CamHeight);
 
 
+    function spawnGasCans()
+    {
+        for(let i=0;i<(maxGasCans-gasCansOnTrack);i++)
+        {
+            // make a radomized gas can
+            const gasCanT=gasCan.clone();
+            let track=Math.random();
+            if(track < 0.5) // side tracks (along z axis)
+            {
+                gasCanT.position.z=(Math.random()*(54))-28;
+                if(track<0.25)
+                    gasCanT.position.x=(Math.random()*(6))-22;
+                else
+                    gasCanT.position.x=(Math.random()*(6))+9;
+            }
+            else // tracks along x axis
+            {
+                gasCanT.position.x=(Math.random()*(37))-22;
+                if(track<0.75)
+                    gasCanT.position.z=(Math.random()*(6))+20;
+                else
+                    gasCanT.position.z=(Math.random()*(6))-28;
+            }
+            // random rotation maybe
+            const gasCanBB=new THREE.Box3(new THREE.Vector3(),new THREE.Vector3());
+            gasCanBB.setFromObject(gasCanT);
+            //console.log(gasCanBB,gasCanT.position);
+            gasCanArr.push([gasCanT,gasCanBB]);
+            scene.add(gasCanT);
+        }
+        gasCansOnTrack=maxGasCans;
+    }
+    spawnGasCans();
 
-    // keybindings - this method supports multiple keys being pressed at the same time
+
+
+
+
+
+
+    
+    // keybindings - this method supports multiple keys being pressed at the same time----------------------------
     var keysPressed={};
     function Pressed(e)
     {
@@ -132,7 +196,7 @@ async function main()
 
         if(e.key=="p" && e.type=="keyup")
         {
-            console.log(car.position.x,car.position.z,car.position.y);
+            console.log(carBB,car.position);
         }
     }
     document.onkeydown=Pressed;
@@ -140,8 +204,17 @@ async function main()
 
 
 
+
+
+
+
+
+
+    // all per frame update functions---------------------------------------------------
+    // moves car and the bounding box
     function moveCar()
     {
+        // rot acc??
         let delta=clock.getDelta();
         if (keysPressed["a"]) {
             car.rotation.z += MathUtils.degToRad(turning_radius);
@@ -165,6 +238,10 @@ async function main()
             carVel+=(fricDir*delta);
             car.position.add(carLookDir.clone().multiplyScalar(carVel*delta));
 
+            // reducing fuel(maybe not update it every frame???)
+            fuel-=((carVel*delta)/fuelDist);
+            if(fuel < 0 )
+                console.log("You ran out of fuel");
 
             // checking for out of bounds(out of stadium)
             if(car.position.x>=16.3 || car.position.x <=-24.5)
@@ -179,7 +256,7 @@ async function main()
                     car.rotation.z=MathUtils.degToRad(180);
                     carLookDir=zaxis.clone().multiplyScalar(-1);
                 }
-                car.position.x+=((car.position.x<=-24.5)?0.07:-0.07);
+                car.position.x+=((car.position.x<=-24.5)?0.05:-0.05);
                 carVel=0;
             }
             if(car.position.z>=29 || car.position.z <=-31)
@@ -194,14 +271,13 @@ async function main()
                     car.rotation.z=MathUtils.degToRad(-90);
                     carLookDir=xaxis.clone().multiplyScalar(-1);
                 }
-                car.position.z+=((car.position.z<=-31)?0.07:-0.07);
+                car.position.z+=((car.position.z<=-31)?0.05:-0.05);
                 carVel=0;
             }
-
-
         }
+        // moving the bounding box too
+        carBB.setFromObject(car); // maybe expensive
     }
-
 
 
     function moveCamera(Mode,cam)
@@ -225,8 +301,32 @@ async function main()
             setCameraPos(CamPos.x,CamPos.y,CamPos.z,driverTarget,cam);
         }
     }
+    // checks for collisions with gas cans
+    function fuelUp()
+    {
+        for(let i=0;i<gasCansOnTrack;i++)
+        {
+            if(gasCanArr[i][1].intersectsBox(carBB))
+            {
+                scene.remove(gasCanArr[i][0]);
+                gasCanArr.splice(i,1);
+                i--;
+                gasCansOnTrack--;
+                fuel+=gasCanFuel;
+                console.log("Fuel",fuel);
+            }
+        }
+        spawnGasCans();
+    }
 
 
+
+
+
+
+
+
+    // the animation loop---------------------------------------------
     // setting up the clock
     let clock=new THREE.Clock();
 
@@ -237,6 +337,7 @@ async function main()
         moveCar();
         moveCamera(viewMode,"normal");
         moveCamera("minimap","minimap");
+        fuelUp();
         renderer.render(scene,camera);
         miniRenderer.render(scene,miniCam);
     }
