@@ -12,7 +12,7 @@ const minimap_width=window.innerWidth/6;
 const minimap_height=window.innerWidth/6;
 const third_CamHeight=0.45;
 const driver_CamHeight=0.15;
-const turning_radius=1.3;
+let turning_radius=0.1; // 1.3 max
 const third_CamTarget=6;
 const driver_CamTarget=13;
 // horizontal cam in code below
@@ -24,29 +24,32 @@ const maxGasCans=20;
 let gasCansOnTrack=0; // length of arr?
 // [[gasCanObject,itsBoundingBox]]
 const gasCanArr=[];
-let health=200;
-let collided=0;
+let health=5;
+let collided=0; // tells if main car already collided
 const wallHealthLoss=20;
 const trueFuelLoss=1;
 const accFuelDrop=0.07;
 const fuelCap=110;
 let fuel=110; // litres
 let gasCanFuel=5; // litres
-// score?? time??
+// score=health+2*laps+2*fuel
 let fuelDist=0.81; // how far you can go on 1 litre
 let loader=null;
 let cons_stadiumData=null;
 let gasCan=null;
 const startline=-1; // z coordinate
+const finishLine=1;
+let laps=0;
+let lapped=0; // tells if already crossed main line
 // lane-width=1.5
-const oppCars=[{name:"cybertruck",stage:0,speed:0.01,driftDir:xaxis,midpointArr:[[-16.75,9.75],[-22.75,20.75]]},
-                {name:"f1car",stage:0,speed:0.015,driftDir:xaxis,midpointArr:[[-18.25,11.25],[-24.25,22.25]]},
-                {name:"musclecar",stage:0,speed:0.02,driftDir:xaxis,midpointArr:[[-21.25,14.25],[-27.25,25.25]]}]
+const oppCars=[{name:"cybertruck",stage:0,speed:0.03,driftDir:xaxis,midpointArr:[[-16.75,9.75],[-22.75,20.75]],fuel:110,health:3,laps:0},
+                {name:"f1car",stage:0,speed:0.035,driftDir:xaxis,midpointArr:[[-18.25,11.25],[-24.25,22.25]],fuel:140,health:3,laps:0},
+                {name:"musclecar",stage:0,speed:0.04,driftDir:xaxis,midpointArr:[[-21.25,14.25],[-27.25,25.25]],fuel:160,health:3,laps:0}]
 const laneCalcHelper=[[-1,-1],[1,-1],[1,1],[-1,1]];
 const stageVelDir=[zaxis.clone().multiplyScalar(-1),xaxis,zaxis,xaxis.clone().multiplyScalar(-1)];
 const innerCorners=[[-16,-22],[9,-22],[9,20],[-16,20]];
-const maxOppSpeed=0.07;
-const oppSpeedChange=0.02;
+const maxOppSpeed=0.12;
+const oppSpeedChange=0.03;
 
 
 
@@ -173,6 +176,18 @@ async function main()
     timeHUD.style.fontWeight="bold";
     timeHUD.style.color="white";
     timeHUD.style.margin="0px";
+    let scoreHUD=document.createElement("p");
+    scoreHUD.innerText="Score: "+(health/4+2*laps+2*fuel);
+    scoreHUD.style.fontSize="35px"
+    scoreHUD.style.fontWeight="bold";
+    scoreHUD.style.color="white";
+    scoreHUD.style.margin="0px";
+    let lapHUD=document.createElement("p");
+    lapHUD.innerText="Laps: "+laps;
+    lapHUD.style.fontSize="35px"
+    lapHUD.style.fontWeight="bold";
+    lapHUD.style.color="white";
+    lapHUD.style.margin="0px";
     let statBox=document.createElement("div");
     statBox.style.position="absolute";
     statBox.style.top="20px";
@@ -180,6 +195,8 @@ async function main()
     statBox.appendChild(healthHUD);
     statBox.appendChild(fuelHUD);
     statBox.appendChild(timeHUD);
+    statBox.appendChild(scoreHUD);
+    statBox.appendChild(lapHUD);
     
     
 
@@ -259,6 +276,8 @@ async function main()
     const oppCarBB=[cybertruckBB,f1carBB,musclecarBB];
     gasCan.position.y=-7.14;
     gasCan.scale.set(1/6,1/6,1/6);
+    // adding the finish line bounding box
+    const finishLineBB=new Box3(new Vector3(-23,-8,finishLine-0.03),new Vector3(-15,0,finishLine));
 
 
 
@@ -355,13 +374,18 @@ async function main()
         // rot acc??
         let delta=clock.getDelta();
         if (keysPressed["a"]) {
+            turning_radius+=0.013;
             car.rotation.z += MathUtils.degToRad(turning_radius);
             carLookDir.applyAxisAngle(new Vector3(0, 1, 0), MathUtils.degToRad(turning_radius));
         }
         if (keysPressed["d"]) {
+            turning_radius+=0.013;
             car.rotation.z -= MathUtils.degToRad(turning_radius);
             carLookDir.applyAxisAngle(new Vector3(0, 1, 0), MathUtils.degToRad(-turning_radius));
         }
+        // reset turning radius
+        if(!keysPressed["d"] && !keysPressed["a"])
+            turning_radius=0.1;
         if (keysPressed["w"]) {
             carVel+=((carPower)*delta);
             if(trueFuelLoss && carVel>0)
@@ -379,6 +403,14 @@ async function main()
             let fricDir=(carVel>0)?(-friction):friction;
             carVel+=(fricDir*delta);
             car.position.add(carLookDir.clone().multiplyScalar(carVel*delta));
+
+            // increasing the lap count
+            if(!lapped && carBB.intersectsBox(finishLineBB))
+            {
+                laps++;
+                lapped=1;
+                setTimeout(()=>(lapped=0),4000);
+            }
 
             // reducing fuel(maybe not update it every frame???)
             if(!trueFuelLoss)
@@ -434,63 +466,74 @@ async function main()
         
         for(let m=0;m<oppCars.length;m++)
         {
-            let multiplier=m;
-            if(m==2)
-                multiplier=m+1;
-            // check for stage change
-            let stage=oppCars[m].stage;
-            const mpArr=oppCars[m].midpointArr;
-            //let xbound=((Math.abs(oppCarObjects[m].position.x)<=(Math.abs(innerCorners[stage][0]+laneCalcHelper[stage][0]*1.5*(multiplier+1)))) && (Math.abs(oppCarObjects[m].position.x)>=(Math.abs(innerCorners[stage][0]+laneCalcHelper[stage][0]*1.5*(multiplier)))));
-            //let zbound=((Math.abs(oppCarObjects[m].position.z)<=(Math.abs(innerCorners[stage][1]+laneCalcHelper[stage][1]*1.5*(multiplier+1)))) && (Math.abs(oppCarObjects[m].position.z)>=(Math.abs(innerCorners[stage][1]+laneCalcHelper[stage][1]*1.5*(multiplier)))));
-            let boundDist=oppCarBB[m].distanceToPoint(new THREE.Vector3(mpArr[0][(stage==1 || stage==2)?1:0],-7.1,mpArr[1][((stage<2)?0:1)]));
-            let bound=( boundDist<= 0.75);
-            //if(boundDist < 1.5)
-            //    console.log(oppCars[m].name,oppCarBB[m].distanceToPoint(new THREE.Vector3(mpArr[0][(stage==1 || stage==2)?1:0],-7.1,mpArr[1][((stage<2)?0:1)])));
-            if(bound)
+            if(oppCars[m].speed!=0)
             {
-                oppCarObjects[m].position.add(stageVelDir[stage].clone().multiplyScalar(0.6)); // reduces error
-                stage=(stage+1)%4;
-                oppCars[m].stage=stage;
-                oppCarObjects[m].rotation.z+=MathUtils.degToRad(-90);
-            }
+                let multiplier=m;
+                if(m==2)
+                    multiplier=m+1;
+                // check for stage change
+                let stage=oppCars[m].stage;
+                const mpArr=oppCars[m].midpointArr;
+                //let xbound=((Math.abs(oppCarObjects[m].position.x)<=(Math.abs(innerCorners[stage][0]+laneCalcHelper[stage][0]*1.5*(multiplier+1)))) && (Math.abs(oppCarObjects[m].position.x)>=(Math.abs(innerCorners[stage][0]+laneCalcHelper[stage][0]*1.5*(multiplier)))));
+                //let zbound=((Math.abs(oppCarObjects[m].position.z)<=(Math.abs(innerCorners[stage][1]+laneCalcHelper[stage][1]*1.5*(multiplier+1)))) && (Math.abs(oppCarObjects[m].position.z)>=(Math.abs(innerCorners[stage][1]+laneCalcHelper[stage][1]*1.5*(multiplier)))));
+                let boundDist=oppCarBB[m].distanceToPoint(new THREE.Vector3(mpArr[0][(stage==1 || stage==2)?1:0],-7.1,mpArr[1][((stage<2)?0:1)]));
+                let bound=( boundDist<= 0.75);
+                //if(boundDist < 1.5)
+                //    console.log(oppCars[m].name,oppCarBB[m].distanceToPoint(new THREE.Vector3(mpArr[0][(stage==1 || stage==2)?1:0],-7.1,mpArr[1][((stage<2)?0:1)])));
+                if(bound)
+                {
+                    oppCarObjects[m].position.add(stageVelDir[stage].clone().multiplyScalar(0.6)); // reduces error
+                    stage=(stage+1)%4;
+                    oppCars[m].stage=stage;
+                    oppCarObjects[m].rotation.z+=MathUtils.degToRad(-90);
+                }
 
-            // changing speed randomly
-            let changeSpeed=(Math.random());
-            if(changeSpeed>0.7)
-            {
-                let increase=(Math.random()>0.5)?1:-1;
-                // making sure the speed is between 0.01 and maxOppSpeed
-                oppCars[m].speed+=((oppCars[m].speed>=maxOppSpeed)?0:(increase*oppSpeedChange));
-                if(oppCars[m].speed < 0.01)
-                    oppCars[m].speed=0.01;
-            }
+                // changing speed randomly
+                let changeSpeed=(Math.random());
+                if(changeSpeed>0.7)
+                {
+                    let increase=(Math.random()>0.5)?1:-1;
+                    // making sure the speed is between 0.01 and maxOppSpeed
+                    oppCars[m].speed+=((oppCars[m].speed>=maxOppSpeed)?0:(increase*oppSpeedChange));
+                    if(oppCars[m].speed < 0.01)
+                        oppCars[m].speed=0.01;
+                }
 
-            oppCarObjects[m].position.add(stageVelDir[stage].clone().multiplyScalar(oppCars[m].speed));
-            oppCarBB[m].setFromObject(oppCarObjects[m]);
+                oppCarObjects[m].position.add(stageVelDir[stage].clone().multiplyScalar(oppCars[m].speed));
+                oppCars[m].fuel-=(oppCars[m].speed/10);
+                oppCarBB[m].setFromObject(oppCarObjects[m]);
 
-            //check for collisions to the main car
-            if((!collided) && oppCarBB[m].intersectsBox(carBB))
-            {
-                health--;
-                let colmsg=document.createElement("p");
-                colmsg.style.fontSize="80px";
-                colmsg.style.fontWeight="bold";
-                colmsg.innerText="YOU Hit Another Car";
-                let col=document.createElement("div");
-                col.style.width="100vw";
-                col.style.height="100vh";
-                col.style.position="absolute";
-                col.style.top="0px";
-                col.style.left="0px";
-                col.style.display="flex";
-                col.style.justifyContent="center";
-                col.style.alignItems="center";
-                col.appendChild(colmsg);
-                document.body.appendChild(col);
-                setTimeout(()=>{document.body.removeChild(col);
-                                collided=0;},2000);
-                collided=1;
-                carVel/=4;
+                //check for collisions to the main car
+                if((!collided) && oppCarBB[m].intersectsBox(carBB))
+                {
+                    health--;
+                    oppCars[m].health--;
+                    let colmsg=document.createElement("p");
+                    colmsg.style.fontSize="80px";
+                    colmsg.style.fontWeight="bold";
+                    colmsg.innerText="YOU Hit Another Car";
+                    let col=document.createElement("div");
+                    col.style.width="100vw";
+                    col.style.height="100vh";
+                    col.style.position="absolute";
+                    col.style.top="0px";
+                    col.style.left="0px";
+                    col.style.display="flex";
+                    col.style.justifyContent="center";
+                    col.style.alignItems="center";
+                    col.appendChild(colmsg);
+                    document.body.appendChild(col);
+                    setTimeout(()=>{document.body.removeChild(col);
+                                    collided=0;},2000);
+                    collided=1;
+                    carVel/=4;
+                }
+                if(oppCarBB[m].intersectsBox(finishLineBB))
+                    oppCars[m].laps++;
+
+
+                if(oppCars[m].health<=0 || oppCars[m].fuel<=0)
+                    oppCars[m].speed=0;
             }
         }
     }
@@ -546,6 +589,8 @@ async function main()
             }
             gameOver((fuel<=0)?1:0,(health<=0)?1:0,0);
         }
+        lapHUD.innerText="Laps: "+laps;
+        scoreHUD.innerText="Score: "+Math.trunc(health/4+2*laps+2*fuel);
         fuelHUD.innerText="Fuel: "+Math.trunc(fuel);
         healthHUD.innerText="Health: "+health;
         timeHUD.innerText="Time: "+(Math.floor(Date.now() / 1000)-startTime);
