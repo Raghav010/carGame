@@ -19,14 +19,16 @@ const driver_CamTarget=13;
 let carVel=0;
 const carPower=3.5;
 const carBrakePower=3.5;
-const friction=2;
+const friction=1;
 const maxGasCans=20;
 let gasCansOnTrack=0; // length of arr?
 // [[gasCanObject,itsBoundingBox]]
 const gasCanArr=[];
-let health=100;
+let health=200;
+let collided=0;
+const wallHealthLoss=20;
 const trueFuelLoss=1;
-const accFuelDrop=0.13;
+const accFuelDrop=0.07;
 const fuelCap=110;
 let fuel=110; // litres
 let gasCanFuel=5; // litres
@@ -35,8 +37,16 @@ let fuelDist=0.81; // how far you can go on 1 litre
 let loader=null;
 let cons_stadiumData=null;
 let gasCan=null;
-
-
+const startline=-1; // z coordinate
+// lane-width=1.5
+const oppCars=[{name:"cybertruck",stage:0,speed:0.01,driftDir:xaxis,midpointArr:[[-16.75,9.75],[-22.75,20.75]]},
+                {name:"f1car",stage:0,speed:0.015,driftDir:xaxis,midpointArr:[[-18.25,11.25],[-24.25,22.25]]},
+                {name:"musclecar",stage:0,speed:0.02,driftDir:xaxis,midpointArr:[[-21.25,14.25],[-27.25,25.25]]}]
+const laneCalcHelper=[[-1,-1],[1,-1],[1,1],[-1,1]];
+const stageVelDir=[zaxis.clone().multiplyScalar(-1),xaxis,zaxis,xaxis.clone().multiplyScalar(-1)];
+const innerCorners=[[-16,-22],[9,-22],[9,20],[-16,20]];
+const maxOppSpeed=0.07;
+const oppSpeedChange=0.02;
 
 
 
@@ -45,7 +55,7 @@ async function loadMeshes()
 {
     // loading all meshes into the app
     loader=new GLTFLoader();
-    cons_stadiumData=await loader.loadAsync("../Meshes/full_stadium_myTrack.glb");
+    cons_stadiumData=await loader.loadAsync("../Meshes/full_stadium_myTrack_withOpp.glb");
     gasCan=await loader.loadAsync("../Meshes/gas-can.glb");
 }
 loadMeshes(); // calling before start page loads, so meshes can load in the background
@@ -194,11 +204,15 @@ async function main()
     
 
    
-    //console.log(cons_stadiumData)
+    //console.log(cons_stadiumData);
+    //return;
     const car=cons_stadiumData.scene.children[6];
-    const track=cons_stadiumData.scene.children[2];
+    const cybertruck=cons_stadiumData.scene.children[7];
+    const f1car=cons_stadiumData.scene.children[8];
+    const musclecar=cons_stadiumData.scene.children[9];
+    /*const track=cons_stadiumData.scene.children[2];
     const outer_stadium=cons_stadiumData.scene.children[1];
-    const inner_stadium=cons_stadiumData.scene.children[0];
+    const inner_stadium=cons_stadiumData.scene.children[0];*/
     gasCan=gasCan.scene;
     
 
@@ -210,13 +224,42 @@ async function main()
 
 
     // configuring these meshes
+    //ourcar
     car.rotation.z+=MathUtils.degToRad(180); // local coordinate frame of car
+    car.position.z=startline;
+    car.position.x=-19.75;
+    //console.log(car.scale);
+    //car.scale.set(0.0007,0.0007,0.0007)
     let carLookDir=new Vector3(0,0,-1); // front of the car
     const carBB=new THREE.Box3(new THREE.Vector3(),new THREE.Vector3());
     carBB.setFromObject(car);
     //console.log(carBB,car.position);
+    //cybertruck
+    cybertruck.rotation.z+=MathUtils.degToRad(180);
+    cybertruck.position.set(-16.75,-7.1,startline);
+    //console.log(cybertruck.scale);
+    //cybertruck.scale.set(0.18,1.5,1.5);
+    const cybertruckBB=new THREE.Box3(new THREE.Vector3(),new THREE.Vector3());
+    cybertruckBB.setFromObject(cybertruck);
+    //f1 car
+    f1car.rotation.z+=MathUtils.degToRad(180);
+    f1car.position.set(-18.25,-7.1,startline);
+    //console.log(f1car.scale);
+    //f1car.scale.set(0.00255,1.5,1.5);
+    const f1carBB=new THREE.Box3(new THREE.Vector3(),new THREE.Vector3());
+    f1carBB.setFromObject(f1car);
+    //muscle car
+    musclecar.rotation.z+=MathUtils.degToRad(180);
+    musclecar.position.set(-21.25,-7.1,startline);
+    //console.log(musclecar.scale);
+    //musclecar.scale.set(1.5,1.5,1.5);
+    const musclecarBB=new THREE.Box3(new THREE.Vector3(),new THREE.Vector3());
+    musclecarBB.setFromObject(musclecar);
+    const oppCarObjects=[cybertruck,f1car,musclecar];
+    const oppCarBB=[cybertruckBB,f1carBB,musclecarBB];
     gasCan.position.y=-7.14;
     gasCan.scale.set(1/6,1/6,1/6);
+
 
 
     // initial camera config
@@ -321,13 +364,13 @@ async function main()
         }
         if (keysPressed["w"]) {
             carVel+=((carPower)*delta);
-            if(trueFuelLoss)
+            if(trueFuelLoss && carVel>0)
                 fuel-=accFuelDrop;
             //car.position+=(carLookDir*0.05);
         }
         if (keysPressed["s"]) {
             carVel+=((-carBrakePower)*delta);
-            if(trueFuelLoss)
+            if(trueFuelLoss && carVel<0)
                 fuel-=accFuelDrop;
             //car.position.z-=(carLookDir*0.05);
         }
@@ -351,37 +394,106 @@ async function main()
             {
                 if(carLookDir.dot(zaxis)>=0)
                 {
-                    car.rotation.z=MathUtils.degToRad(0);
-                    carLookDir=zaxis.clone();
+                    //car.rotation.z=MathUtils.degToRad(0);
+                    //carLookDir=zaxis.clone();
                 }
                 else if(carLookDir.dot(zaxis.clone().multiplyScalar(-1))>0)
                 {
-                    car.rotation.z=MathUtils.degToRad(180);
-                    carLookDir=zaxis.clone().multiplyScalar(-1);
+                    //car.rotation.z=MathUtils.degToRad(180);
+                    //carLookDir=zaxis.clone().multiplyScalar(-1);
                 }
                 car.position.x+=((car.position.x<=-24.5)?0.05:-0.05);
                 carVel=0;
+                health-=wallHealthLoss;
             }
             if(car.position.z>=29 || car.position.z <=-31)
             {
                 if(carLookDir.dot(xaxis)>=0)
                 {
-                    car.rotation.z=MathUtils.degToRad(90);
-                    carLookDir=xaxis.clone();
+                    //car.rotation.z=MathUtils.degToRad(90);
+                    //carLookDir=xaxis.clone();
                 }
                 else if(carLookDir.dot(xaxis.clone().multiplyScalar(-1))>0)
                 {
-                    car.rotation.z=MathUtils.degToRad(-90);
-                    carLookDir=xaxis.clone().multiplyScalar(-1);
+                    //car.rotation.z=MathUtils.degToRad(-90);
+                    //carLookDir=xaxis.clone().multiplyScalar(-1);
                 }
                 car.position.z+=((car.position.z<=-31)?0.05:-0.05);
                 carVel=0;
+                health-=wallHealthLoss;
             }
         }
         // moving the bounding box too
         carBB.setFromObject(car); // maybe expensive
     }
 
+
+    // checks for collisions too with main car
+    function moveOppCars()
+    {
+        
+        for(let m=0;m<oppCars.length;m++)
+        {
+            let multiplier=m;
+            if(m==2)
+                multiplier=m+1;
+            // check for stage change
+            let stage=oppCars[m].stage;
+            const mpArr=oppCars[m].midpointArr;
+            //let xbound=((Math.abs(oppCarObjects[m].position.x)<=(Math.abs(innerCorners[stage][0]+laneCalcHelper[stage][0]*1.5*(multiplier+1)))) && (Math.abs(oppCarObjects[m].position.x)>=(Math.abs(innerCorners[stage][0]+laneCalcHelper[stage][0]*1.5*(multiplier)))));
+            //let zbound=((Math.abs(oppCarObjects[m].position.z)<=(Math.abs(innerCorners[stage][1]+laneCalcHelper[stage][1]*1.5*(multiplier+1)))) && (Math.abs(oppCarObjects[m].position.z)>=(Math.abs(innerCorners[stage][1]+laneCalcHelper[stage][1]*1.5*(multiplier)))));
+            let boundDist=oppCarBB[m].distanceToPoint(new THREE.Vector3(mpArr[0][(stage==1 || stage==2)?1:0],-7.1,mpArr[1][((stage<2)?0:1)]));
+            let bound=( boundDist<= 0.75);
+            //if(boundDist < 1.5)
+            //    console.log(oppCars[m].name,oppCarBB[m].distanceToPoint(new THREE.Vector3(mpArr[0][(stage==1 || stage==2)?1:0],-7.1,mpArr[1][((stage<2)?0:1)])));
+            if(bound)
+            {
+                oppCarObjects[m].position.add(stageVelDir[stage].clone().multiplyScalar(0.6)); // reduces error
+                stage=(stage+1)%4;
+                oppCars[m].stage=stage;
+                oppCarObjects[m].rotation.z+=MathUtils.degToRad(-90);
+            }
+
+            // changing speed randomly
+            let changeSpeed=(Math.random());
+            if(changeSpeed>0.7)
+            {
+                let increase=(Math.random()>0.5)?1:-1;
+                // making sure the speed is between 0.01 and maxOppSpeed
+                oppCars[m].speed+=((oppCars[m].speed>=maxOppSpeed)?0:(increase*oppSpeedChange));
+                if(oppCars[m].speed < 0.01)
+                    oppCars[m].speed=0.01;
+            }
+
+            oppCarObjects[m].position.add(stageVelDir[stage].clone().multiplyScalar(oppCars[m].speed));
+            oppCarBB[m].setFromObject(oppCarObjects[m]);
+
+            //check for collisions to the main car
+            if((!collided) && oppCarBB[m].intersectsBox(carBB))
+            {
+                health--;
+                let colmsg=document.createElement("p");
+                colmsg.style.fontSize="80px";
+                colmsg.style.fontWeight="bold";
+                colmsg.innerText="YOU Hit Another Car";
+                let col=document.createElement("div");
+                col.style.width="100vw";
+                col.style.height="100vh";
+                col.style.position="absolute";
+                col.style.top="0px";
+                col.style.left="0px";
+                col.style.display="flex";
+                col.style.justifyContent="center";
+                col.style.alignItems="center";
+                col.appendChild(colmsg);
+                document.body.appendChild(col);
+                setTimeout(()=>{document.body.removeChild(col);
+                                collided=0;},2000);
+                collided=1;
+                carVel/=4;
+            }
+        }
+    }
 
     function moveCamera(Mode,cam)
     {
@@ -426,13 +538,13 @@ async function main()
     // updates stats and checks for game over
     function updateStats()
     {
-        if(fuel<=0)
+        if(fuel<=0 || health <=0)
         {
             cancelAnimationFrame(animationFrameid);
             while (document.body.firstChild) {
                 document.body.removeChild(document.body.firstChild);
             }
-            gameOver(1,0,0);
+            gameOver((fuel<=0)?1:0,(health<=0)?1:0,0);
         }
         fuelHUD.innerText="Fuel: "+Math.trunc(fuel);
         healthHUD.innerText="Health: "+health;
@@ -455,6 +567,7 @@ async function main()
     function animate(){
         animationFrameid=requestAnimationFrame(animate);
         moveCar();
+        moveOppCars();
         moveCamera(viewMode,"normal");
         moveCamera("minimap","minimap");
         fuelUp();
@@ -476,9 +589,9 @@ async function main()
         console.log("entered game over screen");
         let message=document.createElement("p");
         if(fuelOver)
-            message.innerText="You ran out of fuel :(";
-        else if(healthOver)
-            message.innerText="Your car blew up";
+            message.innerText="| You ran out of fuel :( |";
+        if(healthOver)
+            message.innerText+="|Your car blew up|";
         else if(won)
             message.innerText="You Finished.";
         message.style.position="absolute";
@@ -496,9 +609,5 @@ async function main()
     }
     
 }
-
-
-
-
 
 
